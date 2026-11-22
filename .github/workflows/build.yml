@@ -1,0 +1,108 @@
+name: build-apk
+
+# Сборка идёт в облаке: локально не нужно ни Android SDK, ни места на диске.
+# На выходе — готовый подписанный APK в артефактах запуска.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: 'Ссылка на исходный APK (пусто — взять из релиза base)'
+        required: false
+      frida_version:
+        description: 'Версия Frida gadget'
+        required: false
+        default: '16.5.9'
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - 'build/**'
+      - '.github/workflows/build.yml'
+
+env:
+  FRIDA_VERSION: ${{ inputs.frida_version || '16.5.9' }}
+  BASE_APK_URL: ${{ inputs.apk_url || 'https://github.com/creepyside11/onlinerp/releases/download/base/onlinerp_launcher.apk' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Системные инструменты
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf xz-utils unzip
+
+      - name: Android build-tools
+        uses: android-actions/setup-android@v3
+
+      - name: Установить zipalign и apksigner
+        run: sdkmanager "build-tools;34.0.0" > /dev/null
+
+      - name: Проверить агент
+        run: |
+          python3 build/bundle.py
+          node --check build/agent.js
+          node build/smoke.js
+
+      - name: Скачать Frida gadget
+        run: |
+          URL="https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-gadget-${FRIDA_VERSION}-android-arm64.so.xz"
+          echo "качаю $URL"
+          curl -fsSL -o gadget.xz "$URL"
+          unxz gadget.xz
+          mv gadget frida-gadget.so
+          ls -la frida-gadget.so
+
+      - name: Скачать исходный APK
+        run: |
+          curl -fsSL -o base.apk "$BASE_APK_URL"
+          ls -la base.apk
+          unzip -l base.apk | grep -c "lib/arm64-v8a/" || true
+
+      - name: Ключ для подписи
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+            echo "использую ключ из секретов"
+          else
+            keytool -genkeypair -v \
+              -keystore release.keystore \
+              -alias rakcrmp \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass rakcrmp123 -keypass rakcrmp123 \
+              -dname "CN=RakCRMP, O=RakCRMP, C=RU"
+          fi
+
+      - name: Собрать APK
+        run: |
+          python3 build/patch_apk.py \
+            --apk base.apk \
+            --gadget frida-gadget.so \
+            --script build/agent.js \
+            --keystore release.keystore \
+            --storepass rakcrmp123 \
+            --out RakCRMP.apk
+
+      - name: Итог
+        run: |
+          ls -la RakCRMP.apk
+          du -h RakCRMP.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RakCRMP-apk
+          path: RakCRMP.apk
+          retention-days: 14

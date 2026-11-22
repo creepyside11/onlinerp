@@ -1,0 +1,6 @@
+build/agent.js
+*.apk
+*.keystore
+gadget.xz
+frida-gadget.so
+__pycache__/
