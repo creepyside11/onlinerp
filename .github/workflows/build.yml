@@ -24,6 +24,9 @@ env:
   FRIDA_VERSION: ${{ inputs.frida_version || '17.27.4' }}
   BASE_APK_URL: ${{ inputs.apk_url || 'https://github.com/creepyside11/onlinerp/releases/download/base/onlinerp_launcher.apk' }}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -119,10 +122,39 @@ jobs:
             --storepass rakcrmp123 \
             --out RakCRMP.apk
 
+      - name: Проверить сборку
+        run: |
+          set -e
+          echo "== содержимое lib/arm64-v8a =="
+          unzip -l RakCRMP.apk | grep "lib/arm64-v8a/" | grep -E "gadget|script" || true
+
+          echo "== gadget подключён к libClient.so? =="
+          mkdir -p verify && cd verify
+          unzip -o -q ../RakCRMP.apk "lib/arm64-v8a/*"
+          readelf -d lib/arm64-v8a/libClient.so | grep -i needed
+          test -f lib/arm64-v8a/libgadget.so
+          test -f lib/arm64-v8a/libgadget.config.so
+          test -f lib/arm64-v8a/libscript.so
+          echo "конфиг gadget:"
+          cat lib/arm64-v8a/libgadget.config.so
+
+          echo "== подпись =="
+          cd .. && apksigner verify --print-certs RakCRMP.apk | head -4
+
       - name: Итог
         run: |
           ls -la RakCRMP.apk
           du -h RakCRMP.apk
+
+      - name: Выложить в релиз
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view latest > /dev/null 2>&1 || \
+            gh release create latest --title "RakCRMP — последняя сборка" \
+              --notes "Меню поверх Online RP. Скачать APK и установить."
+          gh release upload latest RakCRMP.apk --clobber
+          echo "ссылка: https://github.com/creepyside11/onlinerp/releases/download/latest/RakCRMP.apk"
 
       - uses: actions/upload-artifact@v4
         with:
