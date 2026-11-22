@@ -45,24 +45,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y patchelf xz-utils unzip
 
-      - name: Android build-tools
-        uses: android-actions/setup-android@v3
-
       - name: Java для подписи
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Установить zipalign и apksigner
+      - name: zipalign и apksigner
         run: |
-          sdkmanager "build-tools;34.0.0" > /dev/null
-          BT="$ANDROID_HOME/build-tools/34.0.0"
+          # На раннере GitHub уже есть Android SDK, поэтому отдельный action
+          # установки не нужен: он падает на принятии лицензий, а нужные
+          # бинарники и так на месте.
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          if [ ! -d "$SDK" ]; then
+            echo "Android SDK не найден в $SDK" >&2
+            exit 1
+          fi
+
+          BT="$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$BT" ]; then
+            echo "build-tools нет, ставлю 34.0.0"
+            yes | "$SDK"/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0" > /dev/null
+            BT="$SDK/build-tools/34.0.0"
+          fi
+
           echo "$BT" >> "$GITHUB_PATH"
+          echo "build-tools: $BT"
           ls "$BT" | head
 
       - name: Проверить агент
         run: |
+          which zipalign apksigner patchelf
           python3 build/bundle.py
           node --check build/agent.js
           node build/smoke.js
@@ -95,11 +108,6 @@ jobs:
               -storepass rakcrmp123 -keypass rakcrmp123 \
               -dname "CN=RakCRMP, O=RakCRMP, C=RU"
           fi
-
-      - name: Проверить инструменты
-        run: |
-          which zipalign apksigner patchelf
-          apksigner version || true
 
       - name: Собрать APK
         run: |
