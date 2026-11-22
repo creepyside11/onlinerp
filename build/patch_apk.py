@@ -127,17 +127,22 @@ def add_dependency(workdir, host_lib):
     log(f"gadget подключён к {host_lib}")
 
 
-def align_and_sign(apk_path, keystore, alias, storepass, out_path):
+def align_and_sign(apk_path, keystore, alias, storepass, out_path, keypass=None,
+                   kstype="PKCS12"):
     aligned = apk_path + ".aligned"
     # -p выравнивает несжатые .so по странице; для сжатых записей это
     # безвредно, поэтому флаг оставляем при любом режиме.
     run(["zipalign", "-p", "-f", "4", apk_path, aligned])
 
+    # В PKCS#12 пароль один на всё хранилище и на ключ, но передаём оба
+    # явно: apksigner в разных версиях спрашивает по-разному.
     run([
         "apksigner", "sign",
         "--ks", keystore,
+        "--ks-type", kstype,
         "--ks-key-alias", alias,
         "--ks-pass", f"pass:{storepass}",
+        "--key-pass", f"pass:{keypass or storepass}",
         "--out", out_path,
         aligned
     ])
@@ -157,6 +162,9 @@ def main():
     parser.add_argument("--keystore", required=True)
     parser.add_argument("--alias", default="rakcrmp")
     parser.add_argument("--storepass", required=True)
+    parser.add_argument("--keypass", default=None,
+                        help="пароль ключа (по умолчанию как у хранилища)")
+    parser.add_argument("--kstype", default="PKCS12")
     parser.add_argument("--no-sign", action="store_true",
                         help="только собрать, без выравнивания и подписи")
     args = parser.parse_args()
@@ -177,7 +185,10 @@ def main():
             log(f"готово (без подписи): {args.out}")
             return 0
 
-        align_and_sign(unsigned, args.keystore, args.alias, args.storepass, args.out)
+        align_and_sign(
+            unsigned, args.keystore, args.alias, args.storepass, args.out,
+            keypass=args.keypass, kstype=args.kstype
+        )
         size = os.path.getsize(args.out) / (1024 * 1024)
         log(f"готово: {args.out} ({size:.1f} МБ)")
         return 0

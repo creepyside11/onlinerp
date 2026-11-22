@@ -106,17 +106,13 @@ jobs:
 
       - name: Ключ для подписи
         run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
-            echo "использую ключ из секретов"
-          else
-            keytool -genkeypair -v \
-              -keystore release.keystore \
-              -alias rakcrmp \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass rakcrmp123 -keypass rakcrmp123 \
-              -dname "CN=RakCRMP, O=RakCRMP, C=RU"
-          fi
+          # Ключ постоянный и лежит в репозитории. Это принципиально:
+          # Android ставит обновление поверх старой версии только при
+          # совпадающей подписи. Сгенерированный заново ключ = каждый раз
+          # «конфликт с другим пакетом» и потеря данных приложения.
+          base64 -d keys/release.p12.b64 > release.p12
+          test -s release.p12
+          ls -la release.p12
 
       - name: Собрать APK
         run: |
@@ -124,8 +120,10 @@ jobs:
             --apk base.apk \
             --gadget frida-gadget.so \
             --script build/agent.js \
-            --keystore release.keystore \
-            --storepass rakcrmp123 \
+            --keystore release.p12 \
+            --kstype PKCS12 \
+            --storepass rakcrmp \
+            --keypass rakcrmp \
             --out RakCRMP.apk
 
       - name: Проверить сборку
@@ -145,7 +143,24 @@ jobs:
           cat lib/arm64-v8a/libgadget.config.so
 
           echo "== подпись =="
-          cd .. && apksigner verify --print-certs RakCRMP.apk | head -4
+          cd ..
+          apksigner verify --print-certs RakCRMP.apk | head -4
+
+          # Сверка с эталонным отпечатком. Если подпись вдруг изменится,
+          # сборка упадёт здесь, а не у пользователя при установке.
+          ACTUAL="$(apksigner verify --print-certs RakCRMP.apk \
+            | grep 'SHA-256 digest' | head -1 | awk '{print $NF}')"
+          EXPECTED="c850cacd2a1938bddb7c6eca412013dcd2fdcda3a87b3ed398d52c41b44eab1d"
+          echo "подпись сейчас : $ACTUAL"
+          echo "подпись эталон : $EXPECTED"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ПОДПИСЬ НЕ СОВПАЛА — обновление поверх старой версии не встанет" >&2
+            exit 1
+          fi
+          echo "подпись совпадает с эталоном"
+
+          echo "== пакет =="
+          python3 build/apk_info.py RakCRMP.apk
 
       - name: Итог
         run: |
