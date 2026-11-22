@@ -39,9 +39,18 @@ def run(cmd, **kwargs):
 
 
 def unpack(apk_path, workdir):
+    """Распаковать APK, запомнив способ сжатия каждой записи.
+
+    Способ важно сохранить: в исходном клиенте все библиотеки сжаты, а
+    значит система распаковывает их при установке (extractNativeLibs=true).
+    Если перепаковать их без сжатия, APK вырастет на десятки мегабайт
+    просто так.
+    """
+    methods = {}
     with zipfile.ZipFile(apk_path) as archive:
-        names = archive.namelist()
-        for name in names:
+        for info in archive.infolist():
+            name = info.filename
+            methods[name] = info.compress_type
             target = os.path.join(workdir, name)
             if name.endswith("/"):
                 os.makedirs(target, exist_ok=True)
@@ -49,11 +58,22 @@ def unpack(apk_path, workdir):
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with archive.open(name) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
-    return names
+    return methods
 
 
-def pack(workdir, out_path):
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as archive:
+def pack(workdir, out_path, methods):
+    """Упаковать обратно, сохранив исходный способ сжатия.
+
+    Новые файлы (gadget, скрипт, конфиг) кладём так же, как остальные
+    библиотеки этого APK — иначе они выбьются из общего режима.
+    """
+    default_so = zipfile.ZIP_DEFLATED
+    for name, method in methods.items():
+        if name.startswith("lib/") and name.endswith(".so"):
+            default_so = method
+            break
+
+    with zipfile.ZipFile(out_path, "w") as archive:
         for root, _dirs, files in os.walk(workdir):
             for name in sorted(files):
                 full = os.path.join(root, name)
@@ -64,12 +84,15 @@ def pack(workdir, out_path):
                 if relative == "META-INF/MANIFEST.MF":
                     continue
 
-                # Нативные библиотеки храним без сжатия: так их можно
-                # отобразить в память напрямую, и zipalign выровняет их
-                # по странице.
-                compress = zipfile.ZIP_STORED if relative.endswith(".so") else zipfile.ZIP_DEFLATED
+                if relative in methods:
+                    method = methods[relative]
+                elif relative.endswith(".so"):
+                    method = default_so
+                else:
+                    method = zipfile.ZIP_DEFLATED
+
                 with open(full, "rb") as handle:
-                    archive.writestr(relative, handle.read(), compress)
+                    archive.writestr(relative, handle.read(), method)
 
 
 def inject(workdir, gadget, script, script_path):
@@ -106,6 +129,8 @@ def add_dependency(workdir, host_lib):
 
 def align_and_sign(apk_path, keystore, alias, storepass, out_path):
     aligned = apk_path + ".aligned"
+    # -p выравнивает несжатые .so по странице; для сжатых записей это
+    # безвредно, поэтому флаг оставляем при любом режиме.
     run(["zipalign", "-p", "-f", "4", apk_path, aligned])
 
     run([
@@ -139,13 +164,13 @@ def main():
     workdir = tempfile.mkdtemp(prefix="rakcrmp-")
     try:
         log(f"распаковка {args.apk}")
-        unpack(args.apk, workdir)
+        methods = unpack(args.apk, workdir)
         inject(workdir, args.gadget, args.script, args.script_path)
         add_dependency(workdir, args.host_lib)
 
         unsigned = os.path.join(workdir, "unsigned.apk")
         log("упаковка")
-        pack(workdir, unsigned)
+        pack(workdir, unsigned, methods)
 
         if args.no_sign:
             shutil.copyfile(unsigned, args.out)
