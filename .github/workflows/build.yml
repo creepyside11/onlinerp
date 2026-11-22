@@ -12,7 +12,7 @@ on:
       frida_version:
         description: 'Версия Frida gadget'
         required: false
-        default: '16.5.9'
+        default: '17.27.4'
   push:
     branches: [main]
     paths:
@@ -21,7 +21,7 @@ on:
       - '.github/workflows/build.yml'
 
 env:
-  FRIDA_VERSION: ${{ inputs.frida_version || '16.5.9' }}
+  FRIDA_VERSION: ${{ inputs.frida_version || '17.27.4' }}
   BASE_APK_URL: ${{ inputs.apk_url || 'https://github.com/creepyside11/onlinerp/releases/download/base/onlinerp_launcher.apk' }}
 
 jobs:
@@ -48,8 +48,18 @@ jobs:
       - name: Android build-tools
         uses: android-actions/setup-android@v3
 
+      - name: Java для подписи
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Установить zipalign и apksigner
-        run: sdkmanager "build-tools;34.0.0" > /dev/null
+        run: |
+          sdkmanager "build-tools;34.0.0" > /dev/null
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          echo "$BT" >> "$GITHUB_PATH"
+          ls "$BT" | head
 
       - name: Проверить агент
         run: |
@@ -85,6 +95,11 @@ jobs:
               -storepass rakcrmp123 -keypass rakcrmp123 \
               -dname "CN=RakCRMP, O=RakCRMP, C=RU"
           fi
+
+      - name: Проверить инструменты
+        run: |
+          which zipalign apksigner patchelf
+          apksigner version || true
 
       - name: Собрать APK
         run: |

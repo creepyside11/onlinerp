@@ -15,6 +15,7 @@
 
 const game = require('../core/game');
 const symbols = require('../core/symbols');
+const native = require('../core/native');
 const log = require('../core/log');
 
 let damageHook = null;
@@ -23,7 +24,7 @@ let lastFix = 0;
 function installDamageHook() {
   if (damageHook !== null) return;
   try {
-    const addr = Module.getExportByName(symbols.LIB, symbols.FUNC.vehicleCanBeDamaged);
+    const addr = native.exportOf(symbols.LIB, symbols.FUNC.vehicleCanBeDamaged);
     damageHook = Interceptor.attach(addr, {
       onLeave: function (retval) {
         retval.replace(0);

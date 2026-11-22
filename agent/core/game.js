@@ -6,6 +6,7 @@
  */
 
 const symbols = require('./symbols');
+const native = require('./native');
 const log = require('./log');
 
 let base = null;
@@ -13,7 +14,7 @@ let fns = {};
 let ready = false;
 
 function addr(name) {
-  return Module.getExportByName(symbols.LIB, name);
+  return native.exportOf(symbols.LIB, name);
 }
 
 function fn(exportName, ret, args) {
@@ -30,7 +31,7 @@ function waitForEngine(onReady, onFail) {
   const timer = setInterval(function () {
     attempts++;
     try {
-      base = Module.findBaseAddress(symbols.LIB);
+      base = native.baseOf(symbols.LIB);
       if (base !== null) {
         clearInterval(timer);
         try {

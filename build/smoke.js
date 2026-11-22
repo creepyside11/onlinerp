@@ -36,6 +36,10 @@ function anyObject(name) {
   return new Proxy(target, {
     get(t, prop) {
       if (prop === 'then') return undefined;
+      if (typeof prop === 'symbol') {
+        return function () { return '<' + name + '>'; };
+      }
+      if (prop === 'toString') return function () { return '<' + name + '>'; };
       if (prop === 'value') return 0;
       if (prop === '$new') return function () { return anyObject(name + '$new'); };
       if (prop === '$dispose') return function () {};
@@ -90,9 +94,20 @@ const sandbox = {
   __classes: [],
   __mainThread: [],
   __impls: {},
+  Process: {
+    findModuleByName: (name) => ({
+      name: name,
+      base: fakePointer,
+      getExportByName: () => fakePointer
+    }),
+    getModuleByName: (name) => ({
+      name: name,
+      base: fakePointer,
+      getExportByName: () => fakePointer
+    })
+  },
   Module: {
-    getExportByName: () => fakePointer,
-    findBaseAddress: () => null
+    getGlobalExportByName: () => fakePointer
   },
   Memory: {
     alloc: () => fakePointer
@@ -163,7 +178,25 @@ if (resume) {
   }
 }
 
+// Прокрутить таймеры: так проверяется ожидание движка и цикл опроса.
+for (let round = 0; round < 3; round++) {
+  const pending = sandbox.__intervals.slice();
+  for (let i = 0; i < pending.length; i++) {
+    try {
+      pending[i].fn();
+    } catch (e) {
+      console.error('ОШИБКА: таймер упал: ' + e);
+      failed = true;
+    }
+  }
+}
+
 const info = logs.filter((l) => l[0] === 'I').map((l) => l[1]);
+if (!info.some((l) => l.indexOf('движок найден') >= 0)) {
+  console.error('ОШИБКА: движок не был найден');
+  failed = true;
+}
+
 if (!info.some((l) => l.indexOf('стартует') >= 0)) {
   console.error('ОШИБКА: агент не дошёл до запуска');
   failed = true;
