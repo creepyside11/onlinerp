@@ -27,6 +27,12 @@ env:
 permissions:
   contents: write
 
+# Два запуска подряд (пуш и ручной) лезли в один релиз и один из них падал.
+# Ставим в очередь: старый отменяется, новый идёт один.
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
